@@ -3,6 +3,7 @@
 import { CONFIG } from '../config.js';
 import { normaliseLicence } from '../lib/licence.js';
 import { fetchFile, extFromUrl, pacer } from './common.js';
+import * as bridge from '../lib/bridge.js';
 
 const wait = pacer(1000);
 const quote = (s) => `"${String(s).replace(/"/g, '')}"`;
@@ -92,6 +93,11 @@ export function createXc(getKey) {
 
   return {
     id: 'xc',
+    /** With the extension: who is signed in on the site, or null. */
+    async identify() {
+      if (!bridge.extensionInfo()) return null;
+      try { return await bridge.call('xc.whoami', {}, { timeout: 30000 }); } catch (e) { return null; }
+    },
     async search({ login, mode, filters = {}, batch }) {
       account = mode === 'own' ? { name: login } : null;
       query = buildQuery({ recordist: login, filters });

@@ -2,6 +2,22 @@
 // bearer token with crossorigin= (MediaWiki accepts that from any origin for OAuth).
 // Every write sends maxlag=5 and assert=user and never ignorewarnings.
 
+/** "Campaign:wlb 2026" or "wlb_2026" → "wlb_2026" (page names with underscores). */
+export const campaignKey = (title) => String(title || '').replace(/^Campaign:/i, '').trim().replace(/ /g, '_');
+
+/** Rough plain text of expanded wikitext: drops bold/italic marks, HTML tags and link brackets. */
+export function wikiToPlain(text) {
+  return String(text || '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\[\[(?:[^|\]]*\|)?([^\]]*)\]\]/g, '$1')
+    .replace(/\[https?:\/\/\S+\s([^\]]+)\]/g, '$1')
+    .replace(/'{2,}/g, '')
+    .replace(/\{\{[^}]*\}\}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export class CommonsError extends Error {
   constructor(code, info, extra = {}) {
     super(info || code);
@@ -105,23 +121,50 @@ export class Commons {
   }
 
   /** Every page in the Campaign: namespace (460), with its JSON text. */
-  async campaignPages() {
-    const titles = [];
-    let cont = {};
-    do {
-      const json = await this.get({ action: 'query', list: 'allpages', apnamespace: '460', aplimit: '500', ...cont });
-      (json.query.allpages || []).forEach((p) => titles.push(p.title));
-      cont = json.continue || null;
-    } while (cont);
+  /** Plain text for a campaign question label that uses a template, e.g. "{{Upload campaign header WLB subject}}". */
+  async plainLabel(text) {
+    const value = String(text || '');
+    if (!/[{<[']/.test(value)) return value;
+    const key = `label|${value}`;
+    this.labelCache = this.labelCache || new Map();
+    if (this.labelCache.has(key)) return this.labelCache.get(key);
+    let plain = value;
+    try { plain = wikiToPlain(await this.expand(value)) || value; } catch (e) { plain = wikiToPlain(value) || value; }
+    this.labelCache.set(key, plain);
+    return plain;
+  }
+
+  /** Campaign pages by name ("wlb_2026"): [{ name, text }]. Missing pages are left out. */
+  async campaignPages(names) {
     const pages = [];
+    const titles = [...new Set(names.map((n) => `Campaign:${campaignKey(n)}`).filter((t) => t !== 'Campaign:'))];
     for (let i = 0; i < titles.length; i += 50) {
       const json = await this.get({ action: 'query', prop: 'revisions', rvprop: 'content', rvslots: 'main', titles: titles.slice(i, i + 50).join('|') });
       (json.query.pages || []).forEach((p) => {
         const text = p.revisions && p.revisions[0] && p.revisions[0].slots.main.content;
-        if (text) pages.push({ name: p.title.replace(/^Campaign:/, ''), text });
+        if (text) pages.push({ name: campaignKey(p.title), text });
       });
     }
     return pages;
+  }
+
+  /** Campaign names matching typed text: by name prefix and by full-text search. */
+  async searchCampaigns(text, limit = 20) {
+    const query = String(text || '').trim().replace(/^Campaign:/i, '');
+    if (!query) return [];
+    const names = new Set();
+    const variants = [...new Set([query, query.charAt(0).toUpperCase() + query.slice(1), query.toLowerCase()])];
+    for (const prefix of variants) {
+      const json = await this.get({ action: 'query', list: 'allpages', apnamespace: '460', apprefix: prefix, aplimit: String(limit) });
+      ((json.query || {}).allpages || []).forEach((p) => names.add(campaignKey(p.title)));
+    }
+    if (names.size < limit) {
+      try {
+        const json = await this.get({ action: 'query', list: 'search', srnamespace: '460', srsearch: query, srlimit: String(limit), srprop: '' });
+        ((json.query || {}).search || []).forEach((p) => names.add(campaignKey(p.title)));
+      } catch (e) { /* prefix results are enough */ }
+    }
+    return [...names].slice(0, limit);
   }
 
   /** Plain text of wikitext such as a template call. */

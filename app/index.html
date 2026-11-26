@@ -53,6 +53,8 @@
           <label class="choice"><input type="radio" name="mode" value="others"> Someone else's openly licensed media</label>
           <small id="modeNote"></small>
         </fieldset>
+        <div id="ebirdPromo"></div>
+        <p id="ebirdNoExtension" class="note" hidden>No extension? You can still upload: use your eBird data file and add the photo files yourself.</p>
         <div id="ebirdFields" class="stack" hidden>
           <label>Your eBird data (the zip or MyEBirdData.csv)
             <input id="ebirdData" type="file" accept=".zip,.csv,application/zip,text/csv">
@@ -82,9 +84,14 @@
         <label><span id="placeLabel">Place</span>
           <input name="place" placeholder="Everywhere" spellcheck="false">
         </label>
-        <label>Per batch
-          <input name="batch" type="number" min="30" max="500" step="30" value="30">
-        </label>
+        <fieldset class="batch">
+          <legend>Per batch</legend>
+          <span class="segmented">
+            <label><input type="radio" name="batch" value="30" checked><span>30</span></label>
+            <label><input type="radio" name="batch" value="50"><span>50</span></label>
+            <label><input type="radio" name="batch" value="100"><span>100</span></label>
+          </span>
+        </fieldset>
         <label class="choice birds"><input type="checkbox" name="birdOnly" checked> Birds only</label>
         <div class="row"><button class="primary" type="submit">Load</button></div>
         <datalist id="speciesList"></datalist>
@@ -111,11 +118,18 @@
           </label>
           <p id="othersLicenceNote" class="note" hidden>Each file keeps the licence it has on the source, and gets a licence review template.</p>
           <label>Campaign
-            <select id="campaignSelect"></select>
+            <span class="row nowrap"><select id="campaignSelect"></select><button id="campaignRemove" class="quiet" type="button" title="Remove this campaign from your list" hidden>Remove</button></span>
           </label>
           <p id="campaignNote" class="note"></p>
+          <p id="campaignListNote" class="note warn"></p>
           <div id="campaignFields" class="stack"></div>
           <label class="choice" id="assamChoice" hidden><input id="assamAuto" type="checkbox" checked> <span id="assamLabel"></span></label>
+          <div id="campaignFinder" class="finder">
+            <label for="campaignSearch">Search other campaigns</label>
+            <span class="row nowrap"><input id="campaignSearch" type="search" placeholder="e.g. wlb, Wiki Loves Earth, wle-in" spellcheck="false"><button id="campaignSearchButton" type="button">Search</button></span>
+            <div id="campaignResults" class="results"></div>
+            <small class="note">Searches all Campaign: pages on Commons. Running campaigns can be added and used; ended ones can be kept in your list but not chosen. Edit the list in Settings.</small>
+          </div>
           <h3>Categories</h3>
           <div id="categoryLayers" class="layers"></div>
           <label>Add a category to this upload
@@ -146,7 +160,7 @@
       <h2>Settings</h2>
       <label>Wikimedia OAuth client ID
         <input name="oauthClientId" spellcheck="false" placeholder="Leave empty to use the one in config.js">
-        <small>Only for people running their own copy. Callback address: <code id="callbackUrl"></code></small>
+        <small>Most people leave this empty. Only needed when running your own copy of the tool: register a client for the callback address <code id="callbackUrl"></code> and paste its client application key (never the secret). <a href="help.html#oauth" target="_blank" rel="noopener">How to get one</a></small>
       </label>
       <label>Xeno-canto API key
         <input name="xcApiKey" spellcheck="false" autocomplete="off">
@@ -169,8 +183,14 @@
       <label>eBird category <input name="platform_ebird" spellcheck="false"></label>
       <label>iNaturalist category <input name="platform_inat" spellcheck="false"></label>
       <label>Xeno-canto category <input name="platform_xc" spellcheck="false"></label>
+      <label>Campaigns in the list
+        <textarea name="campaignList" rows="3" spellcheck="false"></textarea>
+        <small>Campaign: page names on Commons, one per line (for example <code>wlb_2026</code>). Empty the field and save to go back to the tool's default list.</small>
+      </label>
       <label>Default campaign <input name="campaign" spellcheck="false" placeholder="none"></label>
-      <label>Items per batch <input name="batchSize" type="number" min="30" max="500" step="30"></label>
+      <label>Items per batch
+        <select name="batchSize"><option value="30">30</option><option value="50">50</option><option value="100">100</option></select>
+      </label>
       <label>Seconds between uploads <input name="uploadDelaySec" type="number" min="3" max="120"></label>
       <label class="choice"><input type="checkbox" name="reviewFirst"> Show warnings and let me check before each upload run</label>
       <label class="choice"><input type="checkbox" name="licenseReviewOwn"> Ask for a licence review on my own iNaturalist photos</label>
@@ -201,6 +221,7 @@
 
   <footer class="foot">
     <a href="help.html">Help</a>
+    <a href="install.html">Browser extension</a>
     <a id="sourceLink" href="https://github.com/wikimedia-biodiversity/wild2commons">Source code</a>
     <a id="issuesLink" href="https://github.com/wikimedia-biodiversity/wild2commons/issues">Report a problem</a>
     <span id="versionLabel"></span>

@@ -20,8 +20,11 @@ export async function pkceChallenge(verifier) {
 }
 
 /** The callback address to register on Meta-Wiki: the app's address without query, hash or index.html. */
+/** The callback address registered on Meta-Wiki: always the folder's index.html, whether the
+    tool was opened as https://wild2commons.toolforge.org/ or …/index.html (OAuth 2 needs an
+    exact match, and Meta-Wiki warns about a bare domain). */
 export function redirectUriFor(loc) {
-  return loc.origin + loc.pathname.replace(/index\.html$/, '');
+  return `${loc.origin}${loc.pathname.replace(/[^/]*$/, '')}index.html`;
 }
 
 export function authorizeUrl({ restBase, clientId, redirectUri, state, challenge }) {
@@ -58,6 +61,8 @@ export async function exchangeCode({ restBase, clientId, code, redirectUri, veri
 
 const KEY = 'w2c-oauth';
 const PENDING = 'w2c-oauth-pending';
+const POPUP = 'w2c-oauth-popup'; // in localStorage: the state of a login running in a popup
+const CHANNEL = 'w2c-oauth';
 
 export class Login {
   constructor({ restBase, clientId, storage = sessionStorage, location: loc = location }) {
@@ -80,7 +85,7 @@ export class Login {
   }
 
   async start() {
-    if (!this.clientId) throw new Error('No OAuth client ID. Add one in config.js or in Settings.');
+    if (!this.clientId) throw new Error('Commons login is not set up in this copy of the tool: no Wikimedia OAuth client ID. See Help, "Logging in to Commons".');
     const verifier = randomString(48);
     const state = randomString(16);
     this.storage.setItem(PENDING, JSON.stringify({ verifier, state, back: this.loc.search + this.loc.hash }));
@@ -93,7 +98,61 @@ export class Login {
     }));
   }
 
-  /** Completes a login when the page is the OAuth callback. Returns true if it handled one. */
+  /**
+   * Logs in through a small popup window, so the page keeps everything loaded and selected.
+   * Falls back to a full-page login when the browser blocks popups.
+   * Resolves true when logged in; rejects with the reason otherwise.
+   */
+  loginInPopup({ timeoutMs = 10 * 60 * 1000 } = {}) {
+    if (!this.clientId) return Promise.reject(new Error('Commons login is not set up in this copy of the tool: no Wikimedia OAuth client ID. See Help, "Logging in to Commons".'));
+    // Opened before any await, so the browser treats it as part of the click.
+    const popup = window.open('about:blank', 'w2c-login', 'popup,width=560,height=760');
+    if (!popup) return this.start().then(() => false);
+    const verifier = randomString(48);
+    const state = randomString(16);
+    localStorage.setItem(POPUP, state);
+    return new Promise((resolve, reject) => {
+      let channel = null;
+      const finish = async (data) => {
+        if (!data || data.w2c !== 'oauth' || data.state !== state) return;
+        cleanup();
+        if (data.error) { reject(new Error(`Wikimedia login was not completed (${data.error}).`)); return; }
+        try {
+          const token = await exchangeCode({ restBase: this.restBase, clientId: this.clientId, code: data.code, redirectUri: redirectUriFor(this.loc), verifier });
+          this.storage.setItem(KEY, JSON.stringify(token));
+          resolve(true);
+        } catch (e) { reject(e); }
+      };
+      const onMessage = (event) => { if (event.origin === this.loc.origin) finish(event.data); };
+      const timer = setTimeout(() => { cleanup(); reject(new Error('The login window was not completed in time. Press Log in to Commons again.')); }, timeoutMs);
+      function cleanup() {
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        if (channel) channel.close();
+        localStorage.removeItem(POPUP);
+      }
+      window.addEventListener('message', onMessage);
+      if (typeof BroadcastChannel === 'function') { channel = new BroadcastChannel(CHANNEL); channel.onmessage = (e) => finish(e.data); }
+      pkceChallenge(verifier).then((challenge) => {
+        popup.location.href = authorizeUrl({ restBase: this.restBase, clientId: this.clientId, redirectUri: redirectUriFor(this.loc), state, challenge });
+      }, (e) => { cleanup(); try { popup.close(); } catch (x) { /* ignore */ } reject(e); });
+    });
+  }
+
+  /** In the popup: hands the login reply to the page that opened it. Returns true if this page is such a popup. */
+  handOverFromPopup() {
+    const params = new URLSearchParams(this.loc.search);
+    const state = params.get('state');
+    if (!state || (!params.get('code') && !params.get('error')) || localStorage.getItem(POPUP) !== state) return false;
+    const data = { w2c: 'oauth', state, code: params.get('code') || '', error: params.get('error') || '' };
+    try { if (window.opener) window.opener.postMessage(data, this.loc.origin); } catch (e) { /* opener gone */ }
+    if (typeof BroadcastChannel === 'function') { const c = new BroadcastChannel(CHANNEL); c.postMessage(data); c.close(); }
+    history.replaceState(null, '', redirectUriFor(this.loc));
+    setTimeout(() => window.close(), 300);
+    return true;
+  }
+
+  /** Completes a full-page login when the page is the OAuth callback. Returns true if it handled one. */
   async finish() {
     const params = new URLSearchParams(this.loc.search);
     const code = params.get('code');

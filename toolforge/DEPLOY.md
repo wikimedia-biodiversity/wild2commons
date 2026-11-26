@@ -37,10 +37,12 @@ Both repositories must exist and be empty before the first push. Without SSH key
 
 ## 2. Register the OAuth client (once)
 
+Full guide with troubleshooting: [docs/OAUTH.md](../docs/OAUTH.md). Short version:
+
 1. Open https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose/oauth2
 2. Application name: `Wild2Commons`; description: what the tool does.
-3. **Untick "This consumer is confidential"** (the website cannot keep a secret).
-4. OAuth "callback" URL: `https://wild2commons.toolforge.org/`
+3. Application type **Authorization code**, and **untick "Client is confidential"** (the website cannot keep a secret).
+4. OAuth "callback" URL: `https://wild2commons.toolforge.org/index.html`
 5. Applicable project: `commonswiki` (or all projects).
 6. Grants, all four are needed:
    - Basic rights
@@ -52,7 +54,7 @@ Both repositories must exist and be empty before the first push. Without SSH key
    Until an OAuth admin approves the client, only the person who registered it can log in.
 
 For testing on your own computer, register a second client with the callback
-`http://localhost:8000/` and paste its key into Settings (gear) in your browser instead of
+`http://localhost:8000/index.html` and paste its key into Settings (gear) in your browser instead of
 config.js.
 
 ## 3. Put the site online
@@ -82,8 +84,26 @@ No restart is needed for static files. If browsers keep an old script, bump `ver
 ## 5. Releasing
 
 1. Bump `version` in `app/js/config.js` and `package.json`.
-2. `node build.mjs` creates `dist/wild2commons-toolforge-<version>.zip` and the source zip.
-3. Push, update Toolforge (section 4), tag the release on GitHub.
+2. Run `node build.mjs`. It packs the extension into `app/downloads/wild2commons-chrome.zip`
+   and `app/downloads/wild2commons-firefox.zip` (the website offers these on `install.html`),
+   and makes versioned packages in `dist/`.
+3. Commit everything, **including `app/downloads/`**, push, and update Toolforge (section 4).
+   The download buttons then serve the new extension.
+4. Tag the release on GitHub and attach the zips from `dist/`.
+
+### Firefox: signed add-on (recommended)
+Release Firefox only keeps add-ons signed by Mozilla. Self-distributed signing is free:
+1. Sign in at https://addons.mozilla.org/developers/ and choose **Submit a New Add-on →
+   On your own** (unlisted, not shown in the store).
+2. Upload `dist/wild2commons-firefox-<version>.zip` and the source zip when asked.
+3. Download the signed `.xpi`, save it as `app/downloads/wild2commons-firefox.xpi`, commit and
+   deploy. `install.html` then offers the one-click Firefox install automatically.
+4. Repeat for each new version (the version number must go up).
+
+### Chrome Web Store (optional)
+Chrome installs from outside the store only through "Load unpacked" (developer mode). For a
+one-click install, publish `dist/wild2commons-chrome-<version>.zip` on the Chrome Web Store
+(one-time developer fee) and add its link to `install.html`.
 
 ## What never goes in the repository
 

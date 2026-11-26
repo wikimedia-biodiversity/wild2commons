@@ -37,6 +37,21 @@ export function isRunning(campaign, today = new Date().toISOString().slice(0, 10
   return true;
 }
 
+/** "running", "not started", "ended" or "switched off", with a short label for lists. */
+export function campaignStatus(campaign, today = new Date().toISOString().slice(0, 10)) {
+  if (!campaign.enabled) return { state: 'off', label: 'switched off' };
+  if (campaign.start && today < campaign.start) return { state: 'future', label: `starts ${campaign.start}` };
+  if (campaign.end && today > campaign.end) return { state: 'ended', label: `ended ${campaign.end}` };
+  return { state: 'running', label: campaign.end ? `until ${campaign.end}` : 'running' };
+}
+
+/** Campaign names from typed text: one per line or comma, "Campaign:" and links accepted. */
+export function campaignNames(text) {
+  return [...new Set(String(text || '').split(/[\n,]+/)
+    .map((s) => s.trim().replace(/^.*Campaign:/i, '').replace(/[?#].*$/, '').replace(/ /g, '_'))
+    .filter(Boolean))];
+}
+
 export const fieldOptions = (field) => Object.keys(field.options || {}).filter((k) => k !== '');
 
 export function defaultAnswer(field) {

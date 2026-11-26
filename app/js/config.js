@@ -4,11 +4,11 @@
 export const CONFIG = {
   name: 'Wild2Commons',
   tagline: 'A biodiversity media uploader by the Wikimedia Biodiversity Taskforce',
-  version: '0.3.0',
+  version: '0.4.1',
   repoUrl: 'https://github.com/wikimedia-biodiversity/wild2commons',
   issuesUrl: 'https://github.com/wikimedia-biodiversity/wild2commons/issues',
   // Sent to Wikimedia as Api-User-Agent so Wikimedia can tell which tool is calling.
-  userAgent: 'Wild2Commons/0.3.0 (https://wild2commons.toolforge.org/; https://github.com/wikimedia-biodiversity/wild2commons)',
+  userAgent: 'Wild2Commons/0.4.1 (https://wild2commons.toolforge.org/; https://github.com/wikimedia-biodiversity/wild2commons)',
 
   // Wikimedia OAuth 2.0 client ("client application key"), registered on Meta-Wiki as a
   // NON-confidential client with the grants listed in toolforge/DEPLOY.md.
@@ -30,7 +30,15 @@ export const CONFIG = {
     inat: 'Media from iNaturalist',
     xc: 'Xeno-canto',
   },
-  // Campaigns shown first in the campaign list when they are running.
+  // The optional helper extension, hosted with the website (built by build.mjs).
+  extension: {
+    chrome: 'downloads/wild2commons-chrome.zip',
+    firefox: 'downloads/wild2commons-firefox.zip',
+    firefoxSigned: 'downloads/wild2commons-firefox.xpi', // put the Mozilla-signed file here when there is one
+  },
+
+  // Campaigns offered in step 3 by default (Campaign: page names). Each visitor can change the
+  // list in Settings or add others with "Find another campaign".
   pinnedCampaigns: ['wlb_2026'],
 
   // Defaults for the Settings window. Each visitor can change these in their browser.
@@ -41,6 +49,7 @@ export const CONFIG = {
     globalCategories: '',
     platformCategories: null, // null = use the ones above
     campaign: 'wlb_2026',
+    campaignList: null, // null = pinnedCampaigns above
     batchSize: 30,
     reviewFirst: true,
     uploadDelaySec: 8,
@@ -61,7 +70,7 @@ export const SOURCES = {
     blurb: 'Online database of bird observations, launched in 2002 by the Cornell Lab of Ornithology and the National Audubon Society. Its photos are kept in the Macaulay Library.',
     kind: 'photo',
     othersAllowed: false,
-    signInUrl: 'https://ebird.org/downloadMyData',
+    signInUrl: 'https://ebird.org/myebird',
   },
   inat: {
     id: 'inat',

@@ -18,6 +18,7 @@ JPEG, JPEG_A, JPEG_B = jpeg((20, 90, 120)), jpeg((120, 20, 90)), jpeg((90, 120, 
 
 CAMPAIGN = json.loads(subprocess.check_output(['node', '--input-type=module', '-e',
     f"import {{ FALLBACK_WLB_2026 }} from '{ROOT}/app/js/lib/campaign.js'; console.log(FALLBACK_WLB_2026)"]))
+CAMPAIGN['fields'][0]['label'] = '{{Upload campaign header WLB subject}}'  # as on the live Campaign page
 
 EBIRD_CSV = '\r\n'.join([
     'Submission ID,Common Name,Scientific Name,Taxonomic Order,Count,State/Province,County,Location ID,Location,Latitude,Longitude,Date,Time,Protocol,Duration (Min),All Obs Reported,Distance Traveled (km),Area Covered (ha),Number of Observers,Breeding Code,Observation Details,Checklist Comments,ML Catalog Numbers',
@@ -32,7 +33,12 @@ OBS = {'id': 5001, 'observed_on': '2026-10-02', 'place_guess': 'Kannur, Kerala, 
        'photos': [{'id': 901, 'license_code': 'cc-by', 'url': 'https://inaturalist-open-data.s3.amazonaws.com/photos/901/square.jpg'},
                   {'id': 902, 'license_code': 'cc-by-nc', 'url': 'https://inaturalist-open-data.s3.amazonaws.com/photos/902/square.jpg'}]}
 
-uploads, sdc_edits = [], []
+uploads, sdc_edits, seen_campaign_titles, oauth_seen, inat_urls = [], [], [], [], []
+CAMPAIGNS = {
+    'wlb_2026': CAMPAIGN,
+    'wle-in_2026': {'enabled': True, 'title': 'Wiki Loves Earth India 2026', 'start': '2026-11-01', 'end': '2026-12-31', 'defaults': {'categories': ['Images from Wiki Loves Earth 2026 in India']}, 'fields': []},
+    'wle-in_2020': {'enabled': True, 'title': 'Wiki Loves Earth India 2020', 'start': '2020-05-01', 'end': '2020-05-31', 'defaults': {'categories': ['Images from Wiki Loves Earth 2020 in India']}, 'fields': []},
+}
 
 def commons(q, body, ctype):
     if body and ctype.startswith('multipart/'):
@@ -43,12 +49,19 @@ def commons(q, body, ctype):
     if body: q = parse_qs(body.decode())
     a = q.get('action', [''])[0]
     if a == 'wbeditentity': sdc_edits.append(q); return {'success': 1}
+    if a == 'expandtemplates': return {'expandtemplates': {'wikitext': "'''Subject of the photo''' <span>(choose one)</span>"}}
     if a == 'query':
         if q.get('meta') == ['userinfo']: return {'query': {'userinfo': {'id': 1, 'name': 'Tester', 'rights': ['upload', 'edit', 'createpage'], 'groups': []}}}
         if q.get('meta') == ['tokens']: return {'query': {'tokens': {'csrftoken': 'abc+\\'}}}
-        if q.get('list') == ['allpages']: return {'query': {'allpages': [{'title': 'Campaign:wlb_2026'}]}}
+        if q.get('list') == ['allpages']:
+            prefix = q.get('apprefix', [''])[0].lower()
+            return {'query': {'allpages': [{'title': 'Campaign:' + n.replace('_', ' ')} for n in CAMPAIGNS if n.lower().startswith(prefix.replace(' ', '_'))]}}
+        if q.get('list') == ['search']: return {'query': {'search': [{'title': 'Campaign:' + n} for n in CAMPAIGNS if q['srsearch'][0].lower() in json.dumps(CAMPAIGNS[n]).lower()]}}
         if q.get('list') == ['allimages']: return {'query': {'allimages': []}}
-        if q.get('prop') == ['revisions']: return {'query': {'pages': [{'title': 'Campaign:wlb_2026', 'revisions': [{'slots': {'main': {'content': json.dumps(CAMPAIGN)}}}]}]}}
+        if q.get('prop') == ['revisions']:
+            seen_campaign_titles.extend(q['titles'][0].split('|'))
+            # Commons answers with spaces in titles ("Campaign:wlb 2026"), like the live site
+            return {'query': {'pages': [{'title': t.replace('_', ' '), 'revisions': [{'slots': {'main': {'content': json.dumps(CAMPAIGNS[t[9:]])}}}]} if t[9:] in CAMPAIGNS else {'title': t.replace('_', ' '), 'missing': True} for t in q['titles'][0].split('|')]}}
         if 'titles' in q: return {'query': {'pages': [{'title': t, 'pageid': 77} for t in q['titles'][0].split('|')]}}
     return {}
 
@@ -72,14 +85,23 @@ def handle(r):
         path = SITE / (u.path.lstrip('/') or 'index.html')
         if path.is_dir(): path = path / 'index.html'
         if not path.is_file(): return r.send(404, 'text/plain', 'no')
-        types = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png'}
+        types = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.zip': 'application/zip', '.json': 'application/json'}
         return r.send(200, types.get(path.suffix, 'application/octet-stream'), path.read_bytes())
     if host.endswith('birds.cornell.edu'): return r.send(200, 'image/jpeg', JPEG)  # thumbnails; no CORS, like the real CDN may be
     if host == 'api.inaturalist.org':
+        inat_urls.append(r.url)
         if u.path.startswith('/v1/observations/'): return js({'results': [OBS]})
         if u.path == '/v1/observations': return js({'results': [] if 'id_below' in q else [OBS], 'total_results': 1})
         return js({'results': []})
     if host == 'inaturalist-open-data.s3.amazonaws.com': return r.send(200, 'image/jpeg', JPEG, CORS)
+    if host == 'meta.wikimedia.org' and u.path == '/w/rest.php/oauth2/authorize':
+        oauth_seen.append(q)
+        loc = q['redirect_uri'][0] + '?code=test-code&state=' + q['state'][0]
+        return r.send(302, 'text/plain', '', {'Location': loc})
+    if host == 'meta.wikimedia.org' and u.path == '/w/rest.php/oauth2/access_token':
+        body = parse_qs(r.body.decode()); oauth_seen.append(body)
+        ok = body.get('code') == ['test-code'] and body.get('code_verifier') and body.get('client_id') == ['test-client']
+        return js({'access_token': 'tok2', 'expires_in': 14400} if ok else {'error': 'invalid_grant'})
     if host == 'www.wikidata.org': return js(wikidata(q))
     if host == 'commons.wikimedia.org' and u.path == '/w/api.php': return js(commons(q, r.body, r.ctype))
     r.send(404, 'text/plain', '')
@@ -108,7 +130,7 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 
 APP = 'https://wild2commons.toolforge.org/'
 TOKEN = "sessionStorage.setItem('w2c-oauth', JSON.stringify({accessToken:'tok', expiresAt: Date.now()+3600e3}));" \
-        "if (!localStorage.getItem('w2c-settings')) localStorage.setItem('w2c-settings', JSON.stringify({uploadDelaySec:3, reviewFirst:false}));"
+        "if (!localStorage.getItem('w2c-settings')) localStorage.setItem('w2c-settings', JSON.stringify({uploadDelaySec:3, reviewFirst:false, oauthClientId:'test-client'}));"
 shots = Path('/home/claude/shots'); shots.mkdir(exist_ok=True)
 work = Path(tempfile.mkdtemp())
 with zipfile.ZipFile(work / 'ebird.zip', 'w', zipfile.ZIP_DEFLATED) as z: z.writestr('MyEBirdData.csv', EBIRD_CSV)
@@ -121,7 +143,7 @@ def check(cond, label):
     if not cond: failures.append(label)
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(args=[f'--host-resolver-rules=MAP * 127.0.0.1:{PORT}', '--ignore-certificate-errors', '--no-proxy-server'])
+    browser = p.chromium.launch(channel='chromium', args=[f'--host-resolver-rules=MAP * 127.0.0.1:{PORT}', '--ignore-certificate-errors', '--no-proxy-server'])
     ctx = browser.new_context(ignore_https_errors=True, viewport={'width': 1360, 'height': 900})
     ctx.add_init_script(f"if (location.hostname === 'wild2commons.toolforge.org' && !sessionStorage.getItem('w2c-oauth')) {{ {TOKEN} }}")
     page = ctx.new_page(); errors = []
@@ -141,15 +163,57 @@ with sync_playwright() as p:
     page.goto(APP)
     wait("document.getElementById('commonsUser').textContent.includes('Tester')")
     page.screenshot(path=str(shots / 'w2c-step1.png'), full_page=True)
+    check(page.is_visible('.card[data-source=ebird] .promo'), 'eBird card highlights the extension download')
+    for name in ('chrome', 'firefox'):
+        st = page.evaluate(f"fetch('downloads/wild2commons-{name}.zip').then(r => r.status + ' ' + r.headers.get('content-length'))")
+        check(st.startswith('200'), f'{name} extension downloadable from the site ({st})')
     page.click('.card[data-source=inat] button')
     page.fill('#loginInput', 'tester')
     page.click('#toStep2')
+    check(page.eval_on_selector_all('#searchForm input[name=batch]', 'r => r.map(x => x.value)') == ['30', '50', '100'], 'batch choices 30 / 50 / 100')
+    page.click('#searchForm .segmented label:nth-child(2)')
     page.click('#searchForm button[type=submit]')
     wait("document.querySelectorAll('.tile').length === 2")
+    check(any('per_page=50' in u for u in inat_urls), 'batch of 50 requested from iNaturalist')
     page.locator('.tile').first.click()
     page.click('#toStep3')
+    wait("document.querySelectorAll('#campaignSelect option').length > 1")
+    opts = page.eval_on_selector_all('#campaignSelect option', 'os => os.map(o => o.value)')
+    check(opts == ['', 'wlb_2026'], 'campaign list holds only Campaign:wlb_2026 by default: ' + str(opts))
+    check(all(t == 'Campaign:wlb_2026' for t in seen_campaign_titles), 'only the listed campaign page is read')
+    check(page.evaluate("document.getElementById('campaignSelect').value") == 'wlb_2026', 'wlb_2026 selected although Commons answers "wlb 2026"')
+    label = page.inner_text('#campaignFields label')
+    check('Subject of the photo' in label and '{{' not in label and '(choose one)' in label, 'campaign question shown as plain text: ' + label.split(chr(10))[0])
+    check(page.is_visible('#campaignSearch'), 'campaign search box always visible')
+    check('Campaign:wlb_2026' in page.get_attribute('#campaignNote a', 'href'), 'campaign page link uses the page name')
+    page.fill('#campaignSearch', 'wle')
+    page.click('#campaignSearchButton')
+    page.wait_for_selector('#campaignResults .result', timeout=10000)
+    results = page.inner_text('#campaignResults')
+    page.locator('.settings-col').screenshot(path=str(shots / 'w2c-campaigns.png'))
+    check('Wiki Loves Earth India 2026' in results and 'ended 2020-05-31' in results, 'campaign search finds running and ended campaigns')
+    page.locator('#campaignResults .result', has_text='India 2026').locator('button').click()
+    wait("document.getElementById('campaignSelect').value === 'wle-in_2026'")
+    wait("document.getElementById('previewText').textContent.includes('Wiki Loves Earth 2026 in India')")
+    check(True, 'added campaign is selected and applied')
+    page.locator('#campaignResults .result', has_text='India 2020').locator('button').click()
+    wait("document.querySelector('#campaignSelect option[value=\"wle-in_2020\"]') !== null")
+    check(page.eval_on_selector('#campaignSelect option[value="wle-in_2020"]', 'o => o.disabled'), 'ended campaign is listed but cannot be chosen')
+    page.click('#campaignRemove')
+    wait("document.getElementById('campaignSelect').value === ''")
+    page.select_option('#campaignSelect', 'wlb_2026')
     page.select_option('#campaignFields select', 'Bird portraits')
     wait("document.getElementById('previewText').textContent.includes('(Bird portraits)')")
+    # log out, then Upload: login happens in a popup and the selection stays
+    page.click('#logoutButton')
+    wait("document.getElementById('commonsUser').textContent === ''")
+    with page.expect_popup() as pop: page.click('#uploadButton')
+    popup = pop.value
+    wait("document.getElementById('commonsUser').textContent.includes('Tester')", 30000)
+    check(len(oauth_seen) == 2 and oauth_seen[0]['redirect_uri'] == ['https://wild2commons.toolforge.org/index.html'], 'popup login with callback index.html and PKCE code exchange')
+    popup.wait_for_event('close', timeout=10000) if not popup.is_closed() else None
+    check(popup.is_closed(), 'login popup closes itself')
+    check(page.evaluate("!document.getElementById('step3').hidden") and 'Upload 1' in page.inner_text('#uploadButton'), 'still on step 3 with the selection after logging in')
     upload_and_confirm()
     wait("document.querySelector('#progress li[data-state=done]')", 30000)
     check(len(uploads) == 1 and uploads[0]['filename'] == 'Purple Heron (Ardea purpurea)_iNat5001-901.jpg', 'iNaturalist upload, photo fetched from iNaturalist')

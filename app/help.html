@@ -11,6 +11,7 @@
     .help h2 { font: 600 1.4rem var(--display); margin-top: 18px; }
     .help ol, .help ul { padding-left: 22px; display: grid; gap: 6px; }
     .help table { border-collapse: collapse; font-size: .9rem; }
+    .help h3 { margin-top: 6px; }
     .help th, .help td { text-align: left; vertical-align: top; padding: 6px 10px; border-bottom: 1px solid var(--mist); }
   </style>
 </head>
@@ -27,8 +28,8 @@
 
     <h2>Before you start</h2>
     <ul>
-      <li>A Wikimedia account. New accounts get a CAPTCHA on every upload until they are 4 days old with 10 edits; upload one file by hand on Commons first if that happens.</li>
-      <li>For eBird: your data file from eBird's <a href="https://ebird.org/downloadMyData">Download my data</a> page (eBird emails you a zip), and the photo files: the originals from your camera or computer, or each photo's "Download original" from Macaulay Library.</li>
+      <li>A Wikimedia account (you log in with it through Wikimedia, see <a href="#oauth">Logging in to Commons</a>). New accounts get a CAPTCHA on every upload until they are 4 days old with 10 edits; upload one file by hand on Commons first if that happens.</li>
+      <li>For eBird, either <strong>the <a href="install.html">Wild2Commons extension</a></strong> (recommended: your photos and originals load automatically), or your data file from eBird's <a href="https://ebird.org/downloadMyData">Download my data</a> page plus the photo files.</li>
       <li>For Xeno-canto: your API key, from your Xeno-canto account page. Paste it in Settings (the gear button). It stays in your browser.</li>
       <li>For iNaturalist: nothing extra, just your username.</li>
     </ul>
@@ -58,18 +59,75 @@
     <p>Wild2Commons warns you before uploading whenever a licence needs attention. Hidden or obscured locations (for example sensitive species on iNaturalist) are never added.</p>
 
     <h2 id="bookmarklet">Upload straight from a record page</h2>
+    <p>With the extension installed, record pages get an <strong>Upload to Commons</strong> button. Without it, use this bookmarklet:</p>
     <p>Drag this button to your browser's bookmarks bar: <a class="bookmarklet" href="javascript:void(location.href='https://wild2commons.toolforge.org/?url='+encodeURIComponent(location.href))">Upload to Commons</a></p>
     <p>On a Macaulay Library photo page, an iNaturalist observation or a Xeno-canto recording, click it: Wild2Commons opens with that record selected and ready to upload. For eBird photos, choose your eBird data file first.</p>
 
-    <h2>How eBird works here</h2>
-    <p>eBird and Macaulay Library have no public way for other websites to list your photos or download originals, so Wild2Commons uses two things you already have:</p>
+    <h2 id="extension">The extension (optional, recommended for eBird)</h2>
+    <div class="promo">
+      <strong>Load your eBird photos automatically</strong>
+      <p>Install the free Wild2Commons extension for Chrome, Edge or Firefox. It finds your eBird account, lists your Macaulay Library photos and fetches the originals, and adds an <strong>Upload to Commons</strong> button on Macaulay Library, iNaturalist and Xeno-canto record pages.</p>
+      <span class="row"><a class="button primary" href="downloads/wild2commons-chrome.zip" download>Download for Chrome / Edge</a><a class="button primary" href="downloads/wild2commons-firefox.zip" download>Download for Firefox</a><a href="install.html">How to install</a></span>
+    </div>
+
+    <h2>eBird without the extension</h2>
+    <p>eBird and Macaulay Library have no public way for other websites to list your photos or download originals, so without the extension Wild2Commons uses two things you already have:</p>
     <ul>
       <li><strong>Your eBird data</strong> from <a href="https://ebird.org/downloadMyData">Download my data</a>. Its "ML Catalog Numbers" column links each sighting to its photos, which gives the species, date, time, place, coordinates and checklist for each one. The file is read in your browser and not sent anywhere.</li>
       <li><strong>The photo files.</strong> Use your own originals, or "Download original" on each photo's Macaulay Library page. If you prefer, Settings can let Wild2Commons use Macaulay Library's 2400 px copy for photos without a file; the original is better for Commons.</li>
     </ul>
 
+    <h2 id="campaigns">Campaigns</h2>
+    <p>Upload campaigns, such as <a href="https://commons.wikimedia.org/wiki/Campaign:wlb_2026">Wiki Loves Birds India 2026</a>, add their own template, categories and questions to each file. In step 3:</p>
+    <ul>
+      <li><strong>Campaign</strong> lists the campaigns in your list. By default that is only <code>Campaign:wlb_2026</code>. Campaigns that have ended, have not started or are switched off are shown greyed out and cannot be chosen.</li>
+      <li><strong>Find another campaign</strong> searches the Campaign: pages on Commons by name or words. "Add and use" puts a running campaign in your list and selects it.</li>
+      <li><strong>Remove</strong> takes the selected campaign out of your list.</li>
+      <li>In Settings, <strong>Campaigns in the list</strong> shows the whole list, one Campaign: page name per line; empty it to go back to the default. <strong>Default campaign</strong> is the one selected when you reach step 3.</li>
+    </ul>
+    <p>Wild2Commons reads each campaign's rules from its Campaign: page every time, so changes made by the organisers apply straight away. If a campaign only accepts some licences, it tells you before uploading.</p>
+
+    <h2 id="oauth">Logging in to Commons (Wikimedia OAuth)</h2>
+    <p>Wild2Commons uploads with <strong>your own Wikimedia account</strong>, so the files show your name in their history. It uses Wikimedia's login, called OAuth:</p>
+    <ol>
+      <li>Press <strong>Log in to Commons</strong> at the top right.</li>
+      <li>Meta-Wiki opens and asks whether to allow Wild2Commons. Sign in there if you are not signed in yet. Your password is typed only on Wikimedia's own site, never in Wild2Commons.</li>
+      <li>Press <strong>Allow</strong>. You come back to Wild2Commons and your username appears at the top right.</li>
+    </ol>
+    <table>
+      <tr><th>Permission it asks for</th><th>What it is used for</th></tr>
+      <tr><td>Basic rights</td><td>Reading your username and what your account may do</td></tr>
+      <tr><td>Upload new files</td><td>Uploading the photos and sounds you selected</td></tr>
+      <tr><td>Create, edit, and move pages</td><td>Creating each file's description page</td></tr>
+      <tr><td>Edit existing pages</td><td>Adding the caption and structured data after the upload</td></tr>
+    </table>
+    <p>Allow all four; without them uploads fail and Wild2Commons tells you which one is missing. The login lasts a few hours and only in this browser tab; closing the tab logs you out. Nothing is stored on the Wild2Commons server. You can withdraw the permission at any time on <a href="https://meta.wikimedia.org/wiki/Special:OAuthManageMyGrants">Special:OAuthManageMyGrants</a>.</p>
+
+    <h3>The "Wikimedia OAuth client ID" in Settings</h3>
+    <p><strong>Most people leave this empty.</strong> The client ID tells Wikimedia which application is asking you to allow it. Wild2Commons already has one, set by the maintainers in its <code>config.js</code>.</p>
+    <p>You only need your own if you run Wild2Commons somewhere else, for example on your computer (<code>http://localhost:8000/</code>) or on another Toolforge tool, because Wikimedia only sends you back to the address the client ID was registered for. Then:</p>
+    <ol>
+      <li>Open <a href="https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose/oauth2">Propose an OAuth 2.0 consumer</a> on Meta-Wiki.</li>
+      <li>Give it a name (for example "Wild2Commons (local test)"), choose the application type <strong>Authorization code</strong>, and <strong>untick "Client is confidential"</strong>.</li>
+      <li>As the callback URL, enter the address shown under the client ID field in Settings, exactly as shown.</li>
+      <li>Tick the four permissions in the table above and submit.</li>
+      <li>Copy the <strong>client application key</strong> (not the secret) into Settings and save. You can use it straight away; other people can use it after Wikimedia's OAuth administrators approve it.</li>
+    </ol>
+    <p>Never paste the client <em>secret</em> anywhere: Wild2Commons does not use it.</p>
+
+    <h3>Login problems</h3>
+    <ul>
+      <li><strong>"No OAuth client ID"</strong>: this copy of the tool is not set up yet. On wild2commons.toolforge.org, please <a href="https://github.com/wikimedia-biodiversity/wild2commons/issues">report it</a>; on your own copy, add a client ID as described above.</li>
+      <li><strong>Meta-Wiki says the callback or redirect address does not match</strong>: open the tool at exactly the address the client ID was registered for (the callback is the tool's <code>index.html</code>, for example <code>https://wild2commons.toolforge.org/index.html</code>; check <code>https</code> and <code>www.</code>), or use a client ID registered for this address.</li>
+      <li><strong>"Client authentication failed"</strong> on Meta-Wiki: the key is wrong (often the secret was pasted), or the client was registered as "Client credentials", "Owner-only" or confidential. Copy the client application key again or empty the field in Settings; if the type was wrong, register a new client with "Authorization code".</li>
+      <li><strong>Meta-Wiki says the application is not approved</strong>: the client ID is still waiting for approval. Only its owner can use it until then.</li>
+      <li><strong>"Missing these permissions"</strong>: log out, log in again and allow all four permissions.</li>
+      <li><strong>"The login reply did not match this browser tab"</strong>: press Log in to Commons again, in the same tab.</li>
+    </ul>
+    <p>Maintainers: the full guide is <a href="https://github.com/wikimedia-biodiversity/wild2commons/blob/main/docs/OAUTH.md">docs/OAUTH.md</a>.</p>
+
     <h2>Settings</h2>
-    <p>The gear button opens Settings: the default licence, your own categories for every upload, the category for each source, the default campaign, the batch size and the pause between uploads. People running their own copy of the tool can enter their own OAuth client ID; leave it empty to use the one in <code>config.js</code>. Settings stay in this browser; Export and Import move them to another one.</p>
+    <p>The gear button opens Settings: the default licence, your own categories for every upload, the category for each source, the default campaign, the batch size and the pause between uploads. People running their own copy of the tool can enter their own OAuth client ID; leave it empty to use the one in <code>config.js</code> (see <a href="#oauth">Logging in to Commons</a>). Settings stay in this browser; Export and Import move them to another one.</p>
 
     <h2>When something goes wrong</h2>
     <ul>

@@ -1,4 +1,7 @@
-// eBird without any browser extension. The user gives Wild2Commons the file from eBird's
+// eBird, two ways:
+// 1. With the optional Wild2Commons extension: the signed-in eBird account is detected and the
+//    user's Macaulay Library photos and originals load automatically (through the extension).
+// 2. Without it: the user gives Wild2Commons the file from eBird's
 // "Download my data" page (the zip, or MyEBirdData.csv inside it). Its "ML Catalog Numbers"
 // column links each sighting to its Macaulay Library media, which gives species, date, time,
 // place, coordinates and checklist for every photo. The photo files themselves are added from
@@ -6,7 +9,8 @@
 // the user allows it in Settings, the 2400 px copy is fetched from Macaulay Library.
 import { csvObjects } from '../lib/csv.js';
 import { zipText } from '../lib/zip.js';
-import { fetchFile } from './common.js';
+import { fetchFile, extFromMime } from './common.js';
+import * as bridge from '../lib/bridge.js';
 
 export const DOWNLOAD_MY_DATA = 'https://ebird.org/downloadMyData';
 const CDN = 'https://cdn.download.ams.birds.cornell.edu/api/v2/asset/';
@@ -103,6 +107,43 @@ export async function readDataFile(file) {
   return new TextDecoder('utf-8').decode(buffer);
 }
 
+/** An item from a Macaulay Library record read by the extension. */
+export function itemFromAsset(a, extra = {}) {
+  const id = String(a.assetId);
+  const loc = a.location || {};
+  const hasCoords = loc.lat != null && loc.lon != null;
+  return {
+    source: 'ebird',
+    sourceName: 'eBird',
+    key: `ML${id}`,
+    assetId: id,
+    kind: 'photo',
+    comName: a.comName || '',
+    sciName: a.sciName || '',
+    rank: 'species',
+    ids: { ebirdCode: a.speciesCode || '' },
+    date: /^\d{4}-\d{2}-\d{2}/.test(a.obsDt || '') ? a.obsDt.slice(0, 10) : '',
+    time: '',
+    place: { name: loc.name || '', district: loc.district || '', state: loc.state || '', country: loc.country || '', stateCode: loc.stateCode || '' },
+    lat: hasCoords ? loc.lat : null,
+    lon: hasCoords ? loc.lon : null,
+    accuracy: 0,
+    locationHidden: !hasCoords,
+    author: { name: extra.authorName || a.userName || '', url: a.userId ? `https://media.ebird.org/catalog?userId=${a.userId}&mediaType=photo` : '' },
+    licence: '',
+    owner: extra.owner,
+    restricted: !!a.restricted,
+    recordUrl: `https://macaulaylibrary.org/asset/${id}`,
+    recordLabel: `ML${id}`,
+    checklist: a.checklistId ? { id: a.checklistId, url: `https://ebird.org/checklist/${a.checklistId}` } : null,
+    speciesUrl: a.speciesCode ? `https://ebird.org/species/${a.speciesCode}` : '',
+    thumbUrl: `${CDN}${id}/480`,
+    ext: extFromMime(a.mime, 'jpg'),
+    viaExtension: true,
+    partial: !!a.partial,
+  };
+}
+
 const matches = (item, text, fields) => {
   const t = text.toLowerCase();
   return fields.some((f) => String(f || '').toLowerCase().includes(t));
@@ -112,6 +153,8 @@ export function createEbird(settings) {
   let all = [];
   let list = [];
   let shown = 0;
+  let viaExtension = false;
+  const author = () => ({ authorName: settings().authorName || '' });
 
   const next = (count) => {
     const items = list.slice(shown, shown + count);
@@ -121,13 +164,26 @@ export function createEbird(settings) {
 
   return {
     id: 'ebird',
-    /** Loads the eBird data file chosen in step 1. Returns how many media items it lists. */
+    /** True when the extension loads photos automatically. */
+    get viaExtension() { return viaExtension; },
+    useExtension(on) { viaExtension = !!on; },
+    /** With the extension: the signed-in eBird account, or null when signed out. */
+    async identify() {
+      const account = await bridge.call('ebird.account', {}, { timeout: 90000 });
+      return account ? { login: account.userId, name: account.displayName, handle: account.username, id: account.userId } : null;
+    },
+    /** Without the extension: loads the eBird data file chosen in step 1. Returns how many media items it lists. */
     async loadData(file, { authorName, userId }) {
       all = itemsFromData(await readDataFile(file), { authorName, userId });
       return all.length;
     },
     get loaded() { return all.length; },
-    async search({ filters = {}, batch }) {
+    async search({ filters = {}, batch }, onProgress) {
+      if (viaExtension) {
+        const f = { ...filters };
+        const result = await bridge.call('ebird.search', { filters: f, count: batch }, { onProgress });
+        return { items: result.assets.map((a) => itemFromAsset(a, { owner: true, ...author() })), hasMore: result.hasMore, info: result.info };
+      }
       if (!all.length) throw new Error('Choose your eBird data file in step 1 first.');
       const species = String(filters.species || '').trim();
       const place = String(filters.place || '').trim();
@@ -136,17 +192,36 @@ export function createEbird(settings) {
       shown = 0;
       return next(batch);
     },
-    async more(batch) { return next(batch); },
+    async more(batch, onProgress) {
+      if (viaExtension) {
+        const result = await bridge.call('ebird.more', { count: batch }, { onProgress });
+        return { items: result.assets.map((a) => itemFromAsset(a, { owner: true, ...author() })), hasMore: result.hasMore, info: result.info };
+      }
+      return next(batch);
+    },
     async record(ref) {
       const id = String(ref).replace(/\D/g, '');
+      if (viaExtension) {
+        const page = await bridge.call('ebird.asset', { assetId: id }, { timeout: 120000 });
+        return [itemFromAsset(page.asset, { owner: page.owner, ...author() })];
+      }
       const found = all.filter((i) => i.assetId === id);
       if (!found.length) throw new Error(`ML${id} is not in the eBird data file you chose.`);
       return found;
     },
-    async details(item) { return item; },
-    async file(item) {
+    /** With the extension, re-reads the photo page just before upload: full details and the ownership check. */
+    async details(item) {
+      if (!item.viaExtension) return item;
+      const page = await bridge.call('ebird.asset', { assetId: item.assetId }, { timeout: 120000 });
+      return itemFromAsset(page.asset, { owner: page.owner, ...author() });
+    },
+    async file(item, onProgress) {
+      if (item.viaExtension) {
+        const file = await bridge.call('ebird.original', { assetId: item.assetId, allowResized: !!settings().allowResized }, { onProgress, timeout: 5 * 60 * 1000 });
+        return new Blob([file.buffer], { type: file.mime || 'image/jpeg' });
+      }
       if (!settings().allowResized) {
-        throw new Error('Add the photo file first: use "Add file" on the photo, or drop the files on the page.');
+        throw new Error('Add the photo file first: use "Add file" on the photo, or drop the files on the page. Or install the Wild2Commons extension to load originals automatically.');
       }
       return fetchFile(`${CDN}${item.assetId}/2400`, { what: 'the 2400 px copy from Macaulay Library' });
     },

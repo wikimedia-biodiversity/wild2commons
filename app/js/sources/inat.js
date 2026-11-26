@@ -2,6 +2,7 @@
 import { CONFIG } from '../config.js';
 import { normaliseLicence } from '../lib/licence.js';
 import { fetchFile, extFromUrl, pacer } from './common.js';
+import * as bridge from '../lib/bridge.js';
 
 const HIDDEN = new Set(['obscured', 'private']);
 const wait = pacer(1000);
@@ -102,6 +103,11 @@ export function createInat() {
 
   return {
     id: 'inat',
+    /** With the extension: who is signed in on the site, or null. */
+    async identify() {
+      if (!bridge.extensionInfo()) return null;
+      try { return await bridge.call('inat.whoami', {}, { timeout: 30000 }); } catch (e) { return null; }
+    },
     async search({ login, mode, filters = {}, batch }) {
       account = mode === 'own' ? { login } : null;
       query = { user_login: login, photos: 'true', order_by: 'id', order: 'desc' };

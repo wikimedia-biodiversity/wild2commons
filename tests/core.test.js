@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileName, caption, wikitext, structuredData, categoryLayers, titlePart, coordPrecision } from '../app/js/lib/filepage.js';
 import { normaliseLicence, checkItem, freeLicence } from '../app/js/lib/licence.js';
-import { parseCampaign, isRunning, campaignAdditions, answersFor, FALLBACK_WLB_2026 } from '../app/js/lib/campaign.js';
+import { parseCampaign, isRunning, campaignAdditions, answersFor, campaignStatus, campaignNames, FALLBACK_WLB_2026 } from '../app/js/lib/campaign.js';
 import { interpretUpload, uploadOne, withRetries, missingGrants } from '../app/js/lib/uploader.js';
 import { CommonsError } from '../app/js/lib/commons.js';
 import { escapeWikitext, placeLabel, splitList, uniqueCategories } from '../app/js/lib/util.js';
@@ -155,6 +155,15 @@ test('campaign', () => {
   assert.deepEqual(answersFor(c, assam, ['Others'], { assamAuto: false }), ['Others']);
 });
 
+test('campaign list helpers', () => {
+  const c = parseCampaign('wlb_2026', FALLBACK_WLB_2026);
+  assert.equal(campaignStatus(c, '2026-11-27').state, 'running');
+  assert.equal(campaignStatus(c, '2026-10-01').label, 'starts 2026-11-01');
+  assert.equal(campaignStatus(c, '2027-02-01').label, 'ended 2027-01-15');
+  assert.equal(campaignStatus({ ...c, enabled: false }).state, 'off');
+  assert.deepEqual(campaignNames('wlb_2026\nCampaign:wle-in 2027, https://commons.wikimedia.org/wiki/Campaign:wlb_2026?x=1\n'), ['wlb_2026', 'wle-in_2027']);
+});
+
 test('category layers', () => {
   const layers = categoryLayers({ toolCategory: 'T', platformCategory: 'P', taxon: null, globalCategories: ['G'], campaignCategories: ['C'] });
   assert.deepEqual(layers.map((l) => l.names[0]), ['T', 'P', 'Media needing categories', 'G', 'C']);
@@ -235,7 +244,9 @@ test('withRetries: maxlag, badtoken, then gives up on other errors', async () =>
 test('oauth helpers', async () => {
   // RFC 7636 appendix B example
   assert.equal(await pkceChallenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'), 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
-  assert.equal(redirectUriFor({ origin: 'https://wild2commons.toolforge.org', pathname: '/index.html' }), 'https://wild2commons.toolforge.org/');
+  assert.equal(redirectUriFor({ origin: 'https://wild2commons.toolforge.org', pathname: '/index.html' }), 'https://wild2commons.toolforge.org/index.html');
+  assert.equal(redirectUriFor({ origin: 'https://wild2commons.toolforge.org', pathname: '/' }), 'https://wild2commons.toolforge.org/index.html');
+  assert.equal(redirectUriFor({ origin: 'http://localhost:8000', pathname: '/help.html' }), 'http://localhost:8000/index.html');
   const url = new URL(authorizeUrl({ restBase: 'https://meta.wikimedia.org/w/rest.php', clientId: 'abc', redirectUri: 'https://x/', state: 's', challenge: 'c' }));
   assert.equal(url.pathname, '/w/rest.php/oauth2/authorize');
   assert.equal(url.searchParams.get('code_challenge_method'), 'S256');

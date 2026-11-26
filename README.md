@@ -14,7 +14,9 @@ categories and links back to the original record.
 | Folder | What it is |
 | --- | --- |
 | `app/` | The website: static HTML, CSS and JavaScript modules, no build step, no browser extension needed. Uploads with the Commons API after an OAuth 2 login (PKCE, no secret). eBird media come from the user's "Download my data" file plus the photo files they add; iNaturalist and Xeno-canto from their public APIs. |
+| `extension/` | Optional helper extension for Chrome and Firefox: loads the user's eBird photos and originals automatically, fills in iNaturalist/Xeno-canto usernames, adds "Upload to Commons" on record pages. `build.mjs` packs it into `app/downloads/` so the website offers it for download (`install.html`). |
 | `toolforge/DEPLOY.md` | Toolforge setup, OAuth registration and release steps. |
+| `docs/OAUTH.md` | Wikimedia OAuth client ID: how login works, registering the client, testing locally, troubleshooting. |
 | `tests/` | Unit tests (`node --test tests/*.test.js`). |
 
 ## Run it on your computer
@@ -22,10 +24,10 @@ categories and links back to the original record.
 ```sh
 npm run serve              # http://localhost:8000/
 npm test
-node build.mjs             # dist/: Toolforge bundle and source zip
+node build.mjs             # extension zips into app/downloads/, plus dist/ packages
 ```
 
-For logging in locally, register an OAuth 2 client with the callback `http://localhost:8000/`
+For logging in locally, register an OAuth 2 client with the callback `http://localhost:8000/index.html`
 (see DEPLOY.md) and paste its key into Settings.
 
 ## Rules the tool follows

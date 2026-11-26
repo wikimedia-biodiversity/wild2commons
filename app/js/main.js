@@ -1,15 +1,16 @@
 // Wild2Commons web app: three steps (source → media → settings and upload).
 import { CONFIG, SOURCES } from './config.js';
 import { Login, redirectUriFor } from './lib/oauth.js';
-import { Commons } from './lib/commons.js';
+import { Commons, campaignKey } from './lib/commons.js';
 import { Wikidata } from './lib/wikidata.js';
 import { checkItem, licenceLabel, OWN_LICENSES } from './lib/licence.js';
-import { parseCampaign, isRunning, fieldOptions, defaultAnswer, campaignAdditions, FALLBACK_WLB_2026 } from './lib/campaign.js';
+import { parseCampaign, isRunning, campaignStatus, campaignNames, fieldOptions, defaultAnswer, campaignAdditions, FALLBACK_WLB_2026 } from './lib/campaign.js';
 import { fileName, caption, wikitext, categoryLayers, structuredData } from './lib/filepage.js';
 import { uploadOne, isAuthError, isPermissionError, missingGrants } from './lib/uploader.js';
 import { sleep, splitList, uniqueCategories, readJson, writeJson, speciesLabel, placeLabel } from './lib/util.js';
 import { createEbird, DOWNLOAD_MY_DATA, userIdFrom } from './sources/ebird.js';
 import { extFromFile } from './sources/common.js';
+import * as bridge from './lib/bridge.js';
 import { createInat } from './sources/inat.js';
 import { createXc } from './sources/xc.js';
 
@@ -24,7 +25,8 @@ const el = (tag, props = {}, ...children) => {
 const SETTINGS_KEY = 'w2c-settings';
 let settings = { ...CONFIG.defaults, ...readJson(localStorage, SETTINGS_KEY, {}) };
 const platformCategory = (id) => ((settings.platformCategories || {})[id] ?? CONFIG.platformCategories[id]) || '';
-const clampBatch = (n) => Math.min(500, Math.max(30, Math.round(Number(n) || 30)));
+export const BATCH_SIZES = [30, 50, 100];
+const clampBatch = (n) => (BATCH_SIZES.includes(Number(n)) ? Number(n) : BATCH_SIZES.reduce((best, b) => (Math.abs(b - n) < Math.abs(best - n) ? b : best), 30));
 
 // ---------- services ----------
 const login = new Login({ restBase: CONFIG.oauthRest, clientId: settings.oauthClientId || CONFIG.oauthClientId });
@@ -57,6 +59,12 @@ const state = {
   running: null,
 };
 
+function notifyWithHelp(text) {
+  notify(text);
+  const n = $('notice');
+  n.append(' ', el('a', { href: 'help.html#oauth', textContent: 'Help with logging in' }));
+}
+
 function notify(text) {
   const n = $('notice');
   n.textContent = text || '';
@@ -73,7 +81,7 @@ async function refreshCommonsUser() {
       state.commonsUser = info.name;
       state.rights = info.rights;
       const missing = missingGrants(info.rights);
-      if (info.name && missing.length) notify(`Your Commons login is missing these permissions: ${missing.join(', ')}. Log out and log in again, and allow all of them.`);
+      if (info.name && missing.length) notifyWithHelp(`Your Commons login is missing these permissions: ${missing.join(', ')}. Log out and log in again, and allow all of them.`);
     } catch (e) {
       notify(`Could not check your Commons login: ${e.message}`);
     }
@@ -84,9 +92,24 @@ async function refreshCommonsUser() {
   if (state.step === 3) renderPreview();
 }
 
-$('loginButton').addEventListener('click', async () => {
-  try { await login.start(); } catch (e) { notify(`${e.message} Open Settings (the gear) to add one.`); }
-});
+/** Logs in through a popup so nothing loaded or selected is lost. Resolves true when logged in. */
+async function logIn() {
+  const button = $('loginButton');
+  button.disabled = true;
+  button.textContent = 'Logging in… (see the popup window)';
+  try {
+    const ok = await login.loginInPopup();
+    if (ok) { notify(''); await refreshCommonsUser(); }
+    return ok && !!state.commonsUser;
+  } catch (e) {
+    notifyWithHelp(e.message);
+    return false;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Log in to Commons';
+  }
+}
+$('loginButton').addEventListener('click', () => logIn());
 $('logoutButton').addEventListener('click', () => { login.logout(); refreshCommonsUser(); });
 
 // ---------- stepper ----------
@@ -112,6 +135,18 @@ const ICONS = {
   xc: '<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M4 20h4M10 14v12M15 9v22M20 15v10M25 6v28M30 12v16M35 18v4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
 };
 
+/** The "install the extension" box: download links for Chrome and Firefox. */
+function extensionPromo({ compact = false } = {}) {
+  const box = el('div', { className: `promo${compact ? ' compact' : ''}` });
+  box.append(el('strong', { textContent: compact ? 'Load your eBird photos automatically' : 'Install the Wild2Commons extension to load your eBird photos automatically' }));
+  if (!compact) box.append(el('p', { textContent: 'With the free extension for Chrome or Firefox, Wild2Commons finds your eBird account, lists your Macaulay Library photos and fetches the originals for you. No data file or downloading by hand.' }));
+  box.append(el('span', { className: 'row' },
+    el('a', { className: 'button primary', href: CONFIG.extension.chrome, download: '', textContent: 'Download for Chrome' }),
+    el('a', { className: 'button primary', href: CONFIG.extension.firefox, download: '', textContent: 'Download for Firefox' }),
+    el('a', { href: 'install.html', textContent: 'How to install' })));
+  return box;
+}
+
 function renderCards() {
   const box = $('sourceCards');
   box.setAttribute('role', 'radiogroup');
@@ -123,10 +158,13 @@ function renderCards() {
     const icon = el('div');
     icon.innerHTML = ICONS[s.id];
     const title = el('h3', {}, el('a', { href: s.wikipedia, target: '_blank', rel: 'noopener', textContent: s.name, title: `${s.name} on Wikipedia` }));
-    const tag = el('p', { className: 'tag', textContent: s.id === 'ebird' ? 'Your own photos, using the data file from eBird\'s "Download my data".' : (s.kind === 'sound' ? 'Sound recordings. Needs your Xeno-canto API key.' : 'Your photos, or other people\'s openly licensed ones.') });
+    const viaExt = s.id === 'ebird' && bridge.extensionInfo();
+    const tag = el('p', { className: 'tag', textContent: s.id === 'ebird' ? (viaExt ? 'Your own photos. The extension is installed: they load automatically.' : 'Your own photos, from your eBird data file, or automatically with the extension.') : (s.kind === 'sound' ? 'Sound recordings. Needs your Xeno-canto API key.' : 'Your photos, or other people\'s openly licensed ones.') });
     const pick = el('button', { type: 'button', className: state.sourceId === s.id ? 'primary' : '', textContent: state.sourceId === s.id ? 'Selected' : `Use ${s.name}` });
     pick.addEventListener('click', () => chooseSource(s.id));
-    card.append(icon, title, el('p', { textContent: s.blurb }), tag, pick);
+    card.append(icon, title, el('p', { textContent: s.blurb }), tag);
+    if (s.id === 'ebird' && !viaExt) card.append(extensionPromo({ compact: true }));
+    card.append(pick);
     return card;
   }));
 }
@@ -148,6 +186,8 @@ async function chooseSource(id, { quiet = false } = {}) {
     : 'Macaulay Library photos belong to the people who took them, so only your own can be uploaded.';
   $('loginField').hidden = id === 'ebird';
   $('ebirdFields').hidden = id !== 'ebird';
+  $('ebirdPromo').hidden = id !== 'ebird';
+  $('ebirdNoExtension').hidden = true;
   $('loginInput').value = (state.mode === 'own' && (settings.logins || {})[id]) || '';
   if (!quiet) $('accountPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   await identify();
@@ -159,15 +199,42 @@ async function identify() {
   const status = $('accountStatus');
   $('sourceSignIn').hidden = true;
   $('sourceRecheck').hidden = true;
+  const ext = await bridge.detectExtension();
   if (id === 'ebird') {
+    sources.ebird.useExtension(!!ext);
+    $('ebirdFields').hidden = !!ext;
+    $('ebirdPromo').replaceChildren(...(ext ? [] : [extensionPromo()]));
+    $('ebirdNoExtension').hidden = !!ext;
+    if (ext) {
+      state.account = null;
+      status.textContent = 'Asking eBird who is signed in (the extension opens eBird in a background tab)…';
+      updateContinue();
+      try {
+        const account = await sources.ebird.identify();
+        if (!account) throw new Error('signed-out');
+        state.account = account;
+        status.textContent = `Signed in to eBird as ${account.name || account.handle || account.login} (${account.login}). Your photos load automatically.`;
+      } catch (e) {
+        status.textContent = e.message === 'signed-out' ? 'You are not signed in to eBird in this browser. Sign in, then press Check again.' : `Could not check eBird: ${e.message}`;
+        $('sourceSignIn').hidden = false;
+        $('sourceRecheck').hidden = false;
+      }
+      updateContinue();
+      return;
+    }
     status.innerHTML = '';
-    status.append('Get your data from eBird\'s ', el('a', { href: DOWNLOAD_MY_DATA, target: '_blank', rel: 'noopener', textContent: 'Download my data' }),
-      ' page (eBird emails you a zip), then choose that zip here. Wild2Commons reads it in your browser; it is not sent anywhere.');
+    status.append('Without the extension: get your data from eBird\'s ', el('a', { href: DOWNLOAD_MY_DATA, target: '_blank', rel: 'noopener', textContent: 'Download my data' }),
+      ' page (eBird emails you a zip), then choose that zip below. It is read in your browser and not sent anywhere.');
     if (sources.ebird.loaded) status.append(` ${sources.ebird.loaded} Macaulay Library items found in the file you chose.`);
     updateContinue();
     return;
   }
-  status.textContent = `Type the ${s.name} ${id === 'xc' ? 'recordist name' : 'username'}.`;
+  let found = null;
+  if (ext && state.mode === 'own') found = await sources[id].identify();
+  if (found && found.login && !$('loginInput').value) $('loginInput').value = id === 'xc' ? (found.name || found.login) : found.login;
+  status.textContent = found && found.login
+    ? `Signed in to ${s.name} as ${found.name || found.login} (found by the extension).`
+    : `Type the ${s.name} ${id === 'xc' ? 'recordist name' : 'username'}.`;
   if (id === 'xc' && !settings.xcApiKey) status.textContent += ' Add your Xeno-canto API key in Settings (the gear) first.';
   updateLoginHint();
   updateContinue();
@@ -202,7 +269,7 @@ function updateLoginHint() {
 }
 
 function updateContinue() {
-  if (state.sourceId === 'ebird') state.login = sources.ebird.loaded ? (settings.ebirdUserId || 'ebird-data') : '';
+  if (state.sourceId === 'ebird') state.login = sources.ebird.viaExtension ? ((state.account && state.account.login) || '') : (sources.ebird.loaded ? (settings.ebirdUserId || 'ebird-data') : '');
   else state.login = state.sourceId === 'inat' ? sourcesInatLogin($('loginInput').value) : $('loginInput').value.trim();
   $('toStep2').disabled = !state.login || (state.sourceId === 'xc' && !settings.xcApiKey);
   go(state.step);
@@ -246,9 +313,10 @@ function prepareStep2() {
   const id = state.sourceId;
   const form = $('searchForm');
   $('step2Title').textContent = `Load ${SOURCES[id].kind === 'sound' ? 'recordings' : 'photos'} from ${SOURCES[id].name}`;
-  $('placeLabel').textContent = id === 'ebird' ? 'Place (location, district or region code such as IN-KL)' : id === 'xc' ? 'Country' : 'Place';
+  const auto = id === 'ebird' && sources.ebird.viaExtension;
+  $('placeLabel').textContent = id === 'ebird' ? (auto ? 'Region code (IN, IN-KL, IN-KL-KN)' : 'Place (location, district or region code such as IN-KL)') : id === 'xc' ? 'Country' : 'Place';
   $('searchForm').querySelector('.birds').hidden = id === 'ebird';
-  $('dropHint').hidden = id === 'inat';
+  $('dropHint').hidden = id === 'inat' || auto;
   form.elements.batch.value = clampBatch(settings.batchSize);
 }
 
@@ -267,6 +335,21 @@ $('searchForm').elements.species.addEventListener('input', (e) => {
 async function filtersFromForm() {
   const f = $('searchForm').elements;
   const filters = { species: f.species.value.trim(), place: f.place.value.trim(), birdOnly: f.birdOnly.checked };
+  if (state.sourceId === 'ebird' && sources.ebird.viaExtension) {
+    // Macaulay Library filters by eBird species code and region code.
+    if (filters.species) {
+      const m = /(?:species\/|taxonCode=)([a-z0-9]{4,12})/i.exec(filters.species);
+      if (m) filters.taxonCode = m[1];
+      else if (/^[a-z]{4,8}\d?$/.test(filters.species)) filters.taxonCode = filters.species;
+      else {
+        const taxon = await wikidata.taxon({ sciName: filters.species }) || (await wikidata.suggest(filters.species, 'P3444', 1))[0];
+        if (!taxon || !taxon.ebirdCode) throw new Error(`No eBird species code found for "${filters.species}". Paste the species link from eBird instead.`);
+        filters.taxonCode = taxon.ebirdCode;
+      }
+    }
+    if (filters.place) filters.regionCode = filters.place.toUpperCase().replace(/^.*REGIONCODE=([A-Z0-9-]+).*$/, '$1');
+    filters.birdOnly = true;
+  }
   return filters;
 }
 
@@ -429,23 +512,91 @@ $('clearSelection').addEventListener('click', () => {
 });
 
 // ---------- step 3: settings and upload ----------
-async function loadCampaigns() {
-  if (state.campaigns.length) return;
-  let list = [];
-  try {
-    list = (await api.campaignPages()).map((p) => parseCampaign(p.name, p.text)).filter(Boolean).filter((c) => isRunning(c));
-  } catch (e) {
-    const fallback = parseCampaign('wlb_2026', FALLBACK_WLB_2026);
-    if (isRunning(fallback)) list = [fallback];
+const campaignList = () => (Array.isArray(settings.campaignList) ? settings.campaignList : CONFIG.pinnedCampaigns).map(campaignKey);
+const campaignCache = new Map();
+
+/** Reads campaign pages from Commons (once per name), with a built-in copy of wlb_2026 as fallback. */
+async function fetchCampaigns(names) {
+  const missing = names.filter((n) => !campaignCache.has(n));
+  if (missing.length) {
+    try {
+      const pages = await api.campaignPages(missing);
+      for (const p of pages) {
+        const c = parseCampaign(p.name, p.text);
+        if (!c) continue;
+        // Question labels often come from a template; show their plain text.
+        for (const field of c.fields) field.label = await api.plainLabel(field.label);
+        campaignCache.set(p.name, c);
+      }
+    } catch (e) {
+      if (missing.includes('wlb_2026')) campaignCache.set('wlb_2026', parseCampaign('wlb_2026', FALLBACK_WLB_2026));
+    }
   }
-  const pinned = CONFIG.pinnedCampaigns;
-  list.sort((a, b) => {
-    const pa = pinned.indexOf(a.name); const pb = pinned.indexOf(b.name);
-    if (pa !== pb) return (pa < 0 ? 99 : pa) - (pb < 0 ? 99 : pb);
-    return a.title.localeCompare(b.title);
-  });
-  state.campaigns = list;
+  return names.map((n) => campaignCache.get(campaignKey(n))).filter(Boolean);
 }
+
+async function loadCampaigns() {
+  state.campaigns = await fetchCampaigns(campaignList());
+}
+
+function saveCampaignList(names) {
+  settings.campaignList = names;
+  writeJson(localStorage, SETTINGS_KEY, settings);
+}
+
+function fillCampaignSelect(selected) {
+  const cs = $('campaignSelect');
+  cs.replaceChildren(el('option', { value: '', textContent: 'No campaign' }),
+    ...state.campaigns.map((c) => {
+      const st = campaignStatus(c);
+      return el('option', { value: c.name, disabled: st.state !== 'running', textContent: `${c.title} (${st.label})` });
+    }));
+  const ok = state.campaigns.find((c) => c.name === campaignKey(selected) && isRunning(c));
+  cs.value = ok ? selected : '';
+  const missing = campaignList().filter((n) => !state.campaigns.some((c) => c.name === n));
+  $('campaignListNote').textContent = missing.length ? `Not found on Commons: ${missing.map((n) => `Campaign:${n}`).join(', ')}.` : '';
+}
+
+async function searchCampaigns() {
+  const box = $('campaignResults');
+  const text = $('campaignSearch').value.trim();
+  if (!text) { box.replaceChildren(); return; }
+  box.replaceChildren(el('p', { className: 'note', textContent: 'Searching Commons…' }));
+  try {
+    const names = await api.searchCampaigns(text);
+    const found = await fetchCampaigns(names);
+    if (!found.length) { box.replaceChildren(el('p', { className: 'note', textContent: `No campaign found for "${text}".` })); return; }
+    found.sort((a, b) => (campaignStatus(a).state === 'running' ? 0 : 1) - (campaignStatus(b).state === 'running' ? 0 : 1) || a.title.localeCompare(b.title));
+    box.replaceChildren(...found.map((c) => {
+      const st = campaignStatus(c);
+      const inList = campaignList().includes(c.name);
+      const add = el('button', { type: 'button', textContent: inList ? 'In the list' : (st.state === 'running' ? 'Add and use' : 'Add'), disabled: inList });
+      add.addEventListener('click', async () => {
+        saveCampaignList([...campaignList(), c.name]);
+        await loadCampaigns();
+        fillCampaignSelect(st.state === 'running' ? c.name : ($('campaignSelect').value));
+        setCampaign($('campaignSelect').value);
+        $('campaignSelect').dataset.touched = '1';
+        searchCampaigns();
+      });
+      return el('div', { className: `result ${st.state}` },
+        el('div', {}, el('strong', { textContent: c.title }), el('span', { textContent: ` Campaign:${c.name}, ${st.label}` })),
+        add);
+    }));
+  } catch (e) {
+    box.replaceChildren(el('p', { className: 'note warn', textContent: `Search failed: ${e.message}` }));
+  }
+}
+$('campaignSearchButton').addEventListener('click', searchCampaigns);
+$('campaignSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchCampaigns(); } });
+$('campaignRemove').addEventListener('click', async () => {
+  const name = $('campaignSelect').value;
+  if (!name) return;
+  saveCampaignList(campaignList().filter((n) => n !== name));
+  await loadCampaigns();
+  fillCampaignSelect('');
+  setCampaign('');
+});
 
 async function enterStep3() {
   const own = state.mode === 'own';
@@ -460,20 +611,18 @@ async function enterStep3() {
 
   await loadCampaigns();
   const cs = $('campaignSelect');
-  const current = state.campaign ? state.campaign.name : (cs.dataset.touched ? '' : settings.campaign);
-  cs.replaceChildren(el('option', { value: '', textContent: 'No campaign' }),
-    ...state.campaigns.map((c) => el('option', { value: c.name, textContent: `${c.title}${c.end ? ` (until ${c.end})` : ''}` })));
-  cs.value = state.campaigns.some((c) => c.name === current) ? current : '';
+  fillCampaignSelect(state.campaign ? state.campaign.name : (cs.dataset.touched ? '' : settings.campaign));
   setCampaign(cs.value);
 }
 
 function setCampaign(name) {
-  const c = state.campaigns.find((x) => x.name === name) || null;
+  const c = state.campaigns.find((x) => x.name === campaignKey(name)) || null;
   if (c !== state.campaign) state.answers = c ? c.fields.map(defaultAnswer) : [];
   state.campaign = c;
+  $('campaignRemove').hidden = !name;
   $('campaignNote').innerHTML = '';
   if (c) {
-    $('campaignNote').append('Adds the campaign\'s template and categories. ', el('a', { href: `${CONFIG.commonsWiki}Campaign:${c.name}`, target: '_blank', rel: 'noopener', textContent: 'Campaign page' }), ' · ',
+    $('campaignNote').append('Adds the campaign\'s template and categories. ', el('a', { href: `${CONFIG.commonsWiki}Campaign:${encodeURIComponent(c.name)}`, target: '_blank', rel: 'noopener', textContent: 'Campaign page' }), ' · ',
       el('a', { href: `${CONFIG.commonsWiki}Special:UploadWizard?campaign=${encodeURIComponent(c.name)}`, target: '_blank', rel: 'noopener', textContent: 'Upload Wizard' }));
   }
   const box = $('campaignFields');
@@ -595,7 +744,7 @@ function confirmWarnings(sections, { canGo = true } = {}) {
 }
 
 $('uploadButton').addEventListener('click', async () => {
-  if (!state.commonsUser) { try { await login.start(); } catch (e) { notify(e.message); } return; }
+  if (!state.commonsUser && !(await logIn())) return;
   const missing = missingGrants(state.rights);
   if (missing.length) { notify(`Your Commons login cannot upload yet. Missing: ${missing.join(', ')}.`); return; }
   const keys = [...state.selected].filter((k) => !state.done.has(k));
@@ -666,7 +815,7 @@ async function runUploads(keys) {
       line.dataset.state = 'failed';
       say(e.message || String(e));
       if (e.name === 'AbortError') break;
-      if (isAuthError(e)) { say('Your Commons login has expired. Log in again and upload the rest.'); login.logout(); refreshCommonsUser(); break; }
+      if (isAuthError(e)) { say('Your Commons login has expired. Press "Log in to Commons" (your selection is kept), then Upload again; finished files are skipped.'); login.logout(); refreshCommonsUser(); break; }
       if (isPermissionError(e) || e.code === 'captcha') break;
       failures += 1;
       if (failures >= 3) { list.append(el('li', { textContent: 'Stopped after 3 failures in a row. Check the messages above.' })); break; }
@@ -696,6 +845,7 @@ function fillSettings() {
   f.globalCategories.value = splitList(settings.globalCategories).join('\n');
   ['ebird', 'inat', 'xc'].forEach((id) => { f[`platform_${id}`].value = platformCategory(id); });
   f.campaign.value = settings.campaign || '';
+  f.campaignList.value = campaignList().join('\n');
   f.batchSize.value = clampBatch(settings.batchSize);
   f.uploadDelaySec.value = settings.uploadDelaySec;
   f.reviewFirst.checked = !!settings.reviewFirst;
@@ -714,7 +864,8 @@ function saveSettings() {
     ownLicense: f.ownLicense.value,
     globalCategories: splitList(f.globalCategories.value).join('\n'),
     platformCategories: { ebird: f.platform_ebird.value.trim(), inat: f.platform_inat.value.trim(), xc: f.platform_xc.value.trim() },
-    campaign: f.campaign.value.trim(),
+    campaign: campaignNames(f.campaign.value)[0] || '',
+    campaignList: campaignNames(f.campaignList.value).length ? campaignNames(f.campaignList.value) : null,
     batchSize: clampBatch(f.batchSize.value),
     uploadDelaySec: Math.min(120, Math.max(3, Number(f.uploadDelaySec.value) || 8)),
     reviewFirst: f.reviewFirst.checked,
@@ -725,7 +876,7 @@ function saveSettings() {
   login.clientId = settings.oauthClientId || CONFIG.oauthClientId;
   if (before !== settings.oauthClientId) { login.logout(); refreshCommonsUser(); }
   if (state.sourceId === 'xc') updateContinue();
-  renderPreview();
+  if (state.step === 3) enterStep3(); else renderPreview();
 }
 $('settingsButton').addEventListener('click', () => { fillSettings(); $('settingsDialog').showModal(); });
 $('settingsDialog').addEventListener('close', () => { if ($('settingsDialog').returnValue === 'save') saveSettings(); });
@@ -775,7 +926,7 @@ async function openFromLink(params) {
   const s = sources[id];
   try {
     notify('');
-    if (id === 'ebird' && !sources.ebird.loaded) {
+    if (id === 'ebird' && !sources.ebird.viaExtension && !sources.ebird.loaded) {
       notify(`To upload ML${String(ref).replace(/\D/g, '')}, choose your eBird data file below, then load and select it in step 2.`);
       return;
     }
@@ -804,14 +955,25 @@ async function openFromLink(params) {
 }
 
 // ---------- start ----------
+window.addEventListener('error', (e) => notify(`Something went wrong: ${e.message}. Please report it with what you were doing.`));
+window.addEventListener('unhandledrejection', (e) => notify(`Something went wrong: ${(e.reason && e.reason.message) || e.reason}. Please report it with what you were doing.`));
+
 async function start() {
+  if (login.handOverFromPopup()) {
+    document.body.replaceChildren(el('main', {}, el('h2', { textContent: 'Logged in' }), el('p', { textContent: 'You can close this window and go back to Wild2Commons.' })));
+    return;
+  }
   $('versionLabel').textContent = `Version ${CONFIG.version}`;
   $('sourceLink').href = CONFIG.repoUrl;
   $('issuesLink').href = CONFIG.issuesUrl;
   renderCards();
+  bridge.detectExtension().then((info) => {
+    renderCards();
+    if (info) $('versionLabel').textContent = `Version ${CONFIG.version}, extension ${info.version} connected${info.version !== CONFIG.version ? ' (update available on the install page)' : ''}`;
+  });
   $('authorName').value = settings.authorName || '';
   $('ebirdUser').value = settings.ebirdUserId || '';
-  try { await login.finish(); } catch (e) { notify(e.message); }
+  try { await login.finish(); } catch (e) { notifyWithHelp(e.message); }
   await refreshCommonsUser();
   const params = new URLSearchParams(location.search);
   if (params.get('source') || params.get('url')) await openFromLink(params);

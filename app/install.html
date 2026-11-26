@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install the extension – Wild2Commons</title>
+  <link rel="icon" href="img/icon-48.png">
+  <link rel="stylesheet" href="css/app.css">
+  <style>
+    .help { max-width: 780px; display: grid; gap: 14px; }
+    .help h2 { font: 600 1.4rem var(--display); margin-top: 18px; }
+    .help h3 { margin-top: 4px; }
+    .help ol, .help ul { padding-left: 22px; display: grid; gap: 7px; }
+    .status { padding: 10px 14px; border-radius: 8px; background: var(--card); border: 1px solid var(--mist); }
+    .status.ok { border-color: var(--leaf); }
+  </style>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand">
+      <h1><a href="./">Wild2Commons</a></h1>
+      <p>A biodiversity media uploader by the Wikimedia Biodiversity Taskforce</p>
+    </div>
+    <div class="account"><a href="./">Back to the uploader</a></div>
+  </header>
+  <main class="help">
+    <h2 style="margin-top:0">Install the Wild2Commons extension</h2>
+    <p id="extStatus" class="status">Checking whether the extension is installed…</p>
+
+    <div class="promo">
+      <strong>Load your eBird photos automatically</strong>
+      <p>The extension finds your eBird account, lists your Macaulay Library photos and fetches the originals, so you don't need the eBird data file or to download photos by hand. It also adds an <strong>Upload to Commons</strong> button on Macaulay Library, iNaturalist and Xeno-canto record pages, and fills in your iNaturalist username.</p>
+      <span class="row">
+        <a class="button primary" id="chromeLink" href="downloads/wild2commons-chrome.zip" download>Download for Chrome / Edge</a>
+        <a class="button primary" id="firefoxLink" href="downloads/wild2commons-firefox.zip" download>Download for Firefox</a>
+        <span class="note" id="extVersion"></span>
+      </span>
+    </div>
+    <p class="note">The extension is optional. Wild2Commons works without it; for eBird you then use your eBird data file and add the photo files yourself.</p>
+
+    <h2>Chrome, Edge, Brave and other Chromium browsers</h2>
+    <ol>
+      <li>Download <strong>wild2commons-chrome.zip</strong> with the button above.</li>
+      <li>Unzip it into a folder you will keep, for example <code>Documents\Wild2Commons extension</code>. Don't delete this folder afterwards: the browser runs the extension from it.</li>
+      <li>Open <code>chrome://extensions</code> (Edge: <code>edge://extensions</code>) in the address bar.</li>
+      <li>Turn on <strong>Developer mode</strong> (top right; in Edge, in the left panel).</li>
+      <li>Click <strong>Load unpacked</strong> and choose the unzipped folder: the one that contains <code>manifest.json</code>.</li>
+      <li>Come back to Wild2Commons and reload the page. The eBird card now says the extension is installed.</li>
+    </ol>
+    <p class="note">Chrome shows a reminder about developer-mode extensions now and then; that is normal for extensions not installed from the Chrome Web Store.</p>
+
+    <h2>Firefox</h2>
+    <div id="firefoxSigned" hidden>
+      <ol>
+        <li>Click <a id="xpiLink" href="downloads/wild2commons-firefox.xpi">Install the signed Firefox add-on</a>.</li>
+        <li>Firefox asks for permission: click <strong>Continue to installation</strong>, then <strong>Add</strong>.</li>
+        <li>Reload Wild2Commons.</li>
+      </ol>
+    </div>
+    <div id="firefoxUnsigned">
+      <p>Firefox only keeps add-ons that Mozilla has signed. Until the signed version is available here, install it for the current session:</p>
+      <ol>
+        <li>Download <strong>wild2commons-firefox.zip</strong> with the button above and unzip it.</li>
+        <li>Open <code>about:debugging#/runtime/this-firefox</code> in the address bar.</li>
+        <li>Click <strong>Load Temporary Add-on…</strong> and choose <code>manifest.json</code> in the unzipped folder.</li>
+        <li>Reload Wild2Commons.</li>
+      </ol>
+      <p class="note">A temporary add-on is removed when Firefox closes; repeat the steps next time. Firefox Developer Edition and Nightly can keep it permanently after setting <code>xpinstall.signatures.required</code> to <code>false</code> in <code>about:config</code>.</p>
+    </div>
+
+    <h2>Updating</h2>
+    <p>When this page shows a newer version than the one installed, download it again, unzip it over the old folder, and press the reload arrow on the extension in <code>chrome://extensions</code> (Firefox: load it again).</p>
+
+    <h2>What the extension can see</h2>
+    <ul>
+      <li>It works on eBird, Macaulay Library, iNaturalist, Xeno-canto and the Wild2Commons website only.</li>
+      <li>It opens your eBird photo list and photo pages in background tabs and closes them afterwards, and uses "Download original" on your own photos.</li>
+      <li>It keeps no passwords or sign-in tokens and sends nothing anywhere except to the Wild2Commons page open in your browser.</li>
+      <li>The code is public: <a href="https://github.com/wikimedia-biodiversity/wild2commons/tree/main/extension">extension folder on GitHub</a>.</li>
+    </ul>
+  </main>
+  <footer class="foot"><a href="./">Wild2Commons</a><a href="help.html">Help</a><a href="https://github.com/wikimedia-biodiversity/wild2commons">Source code</a></footer>
+  <script type="module">
+    import { CONFIG } from './js/config.js';
+    import { detectExtension } from './js/lib/bridge.js';
+    document.getElementById('extVersion').textContent = `Version ${CONFIG.version}`;
+    fetch(CONFIG.extension.firefoxSigned, { method: 'HEAD' }).then((r) => {
+      if (r.ok) { document.getElementById('firefoxSigned').hidden = false; document.getElementById('firefoxUnsigned').hidden = true; document.getElementById('firefoxLink').href = CONFIG.extension.firefoxSigned; }
+    }).catch(() => {});
+    detectExtension(1500).then((info) => {
+      const s = document.getElementById('extStatus');
+      if (info) {
+        s.classList.add('ok');
+        s.textContent = info.version === CONFIG.version
+          ? `The extension is installed (version ${info.version}). Your eBird photos load automatically.`
+          : `The extension is installed (version ${info.version}). Version ${CONFIG.version} is available below.`;
+      } else s.textContent = 'The extension is not installed in this browser (or this page needs reloading after installing).';
+    });
+  </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 {
   "name": "wild2commons",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "private": true,
   "description": "A biodiversity media uploader by the Wikimedia Biodiversity Taskforce",
   "type": "module",

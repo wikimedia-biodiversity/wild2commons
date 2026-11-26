@@ -1,4 +1,5 @@
 // Shared helpers for the source adapters.
+import * as bridge from '../lib/bridge.js';
 
 /** Fetches a file straight from the source. If the site does not allow that, the user is asked
     to add the file from their computer instead ("Add file" on the item). */
@@ -7,7 +8,11 @@ export async function fetchFile(url, { what = 'the file' } = {}) {
   try {
     response = await fetch(url, { mode: 'cors', credentials: 'omit' });
   } catch (error) {
-    throw new Error(`The browser was not allowed to fetch ${what}. Download it yourself and use "Add file" on the item.`);
+    if (bridge.extensionInfo() && !/birds\.cornell\.edu/.test(url)) {
+      const file = await bridge.call('fetchFile', { url });
+      return new Blob([file.buffer], { type: file.mime || 'application/octet-stream' });
+    }
+    throw new Error(`The browser was not allowed to fetch ${what}. Download it yourself and use "Add file" on the item, or install the Wild2Commons extension.`);
   }
   if (!response.ok) throw new Error(`Fetching ${what} failed (the server answered ${response.status}). Download it yourself and use "Add file" on the item.`);
   return response.blob();
